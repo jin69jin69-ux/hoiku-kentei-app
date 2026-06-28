@@ -208,8 +208,15 @@ function EditMode({ onExit }) {
   const [errorMsg, setErrorMsg] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
   const [editingQ, setEditingQ] = useState(null);
-  const [inputMode, setInputMode] = useState("text"); // "pdf" | "text" — デフォルトをテキストに
+  const [inputMode, setInputMode] = useState("text");
   const [pasteText, setPasteText] = useState("");
+  const [yearInput, setYearInput] = useState(""); // 登録する年度（例：令和8年前期）
+
+  // 搭載済み年度情報の取得
+  const getYearHistory = () => {
+    try { return JSON.parse(localStorage.getItem("pk_year_history") || "{}"); } catch { return {}; }
+  };
+  const [yearHistory, setYearHistory] = useState(getYearHistory);
 
   const handlePdfChange = (e) => {
     const f = e.target.files[0];
@@ -256,6 +263,23 @@ function EditMode({ onExit }) {
       // ALL_SUBJECTS にも即時反映
       const subj = ALL_SUBJECTS.find(s=>s.id===selectedSubjectId);
       if(subj) subj.questions.push(...parsedQuestions);
+
+      // 年度履歴を保存
+      if(yearInput.trim()) {
+        const history = getYearHistory();
+        if(!history[selectedSubjectId]) history[selectedSubjectId] = [];
+        const entry = {
+          year: yearInput.trim(),
+          count: parsedQuestions.length,
+          addedAt: new Date().toLocaleDateString("ja-JP")
+        };
+        // 同じ年度が既にあれば上書き、なければ追加
+        const existIdx = history[selectedSubjectId].findIndex(h => h.year === yearInput.trim());
+        if(existIdx >= 0) history[selectedSubjectId][existIdx] = entry;
+        else history[selectedSubjectId].push(entry);
+        localStorage.setItem("pk_year_history", JSON.stringify(history));
+        setYearHistory({...history});
+      }
 
       setSaveMsg(`✅ ${parsedQuestions.length}問を「${subj?.name}」に追加しました！`);
       setStep("done");
@@ -304,6 +328,37 @@ function EditMode({ onExit }) {
 
         {step==="select" && (
           <>
+            {/* 搭載済み年度一覧 */}
+            <div className="edit-section">
+              <label className="edit-label">📚 搭載済み問題の年度管理</label>
+              <div style={{background:"#FAFAFA",borderRadius:14,padding:"10px 12px",fontSize:12,maxHeight:200,overflowY:"auto"}}>
+                {ALL_SUBJECTS.map(s => {
+                  const history = yearHistory[s.id] || [];
+                  const extraCount = (() => { try { return JSON.parse(localStorage.getItem("pk_extra_" + s.id) || "[]").length; } catch { return 0; } })();
+                  return (
+                    <div key={s.id} style={{marginBottom:8,paddingBottom:8,borderBottom:"1px solid #F0E8E0"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:3}}>
+                        <span style={{fontWeight:700,color:"#4A3728",fontSize:12}}>{s.emoji} {s.name}</span>
+                        <span style={{fontSize:11,color:"#999"}}>計{s.questions.length}問{extraCount>0?`（追加${extraCount}問）`:""}</span>
+                      </div>
+                      {history.length > 0 ? (
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                          {history.map((h,i) => (
+                            <span key={i} style={{background:"#EDE8FF",color:"#7C3AED",fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:100}}>
+                              {h.year}（{h.count}問）
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{fontSize:10,color:"#CCC"}}>追加問題なし（初期搭載のみ）</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 問題追加 */}
             <div className="edit-section">
               <label className="edit-label">① 追加先の科目を選択</label>
               <select className="edit-select" value={selectedSubjectId} onChange={e=>setSelectedSubjectId(e.target.value)}>
@@ -314,28 +369,32 @@ function EditMode({ onExit }) {
             </div>
 
             <div className="edit-section">
-              <label className="edit-label">② ClaudeにPDFを読ませてJSONを生成 → ここに貼り付け</label>
-              <div style={{background:"#F5F0FF",borderRadius:14,padding:"12px 14px",marginBottom:10,fontSize:12,color:"#5A3080",lineHeight:1.7}}>
-                <div style={{fontWeight:800,marginBottom:6}}>📋 使い方（3ステップ）</div>
-                <div>① このチャット画面で過去問PDFを添付して送信：</div>
-                <div style={{background:"#EDE8FF",borderRadius:8,padding:"6px 10px",margin:"4px 0",fontFamily:"monospace",fontSize:11,wordBreak:"break-all"}}>
-                  「このPDFの問題を全てJSON配列で出力してください。形式: [{"{"}"text":"問題文","options":["選1",...],"answer":[0],"type":"single","explanation":"解説"{"}"}]」
-                </div>
-                <div>② Claudeが出力したJSON全体をコピー</div>
-                <div>③ 下のテキストエリアに貼り付けて「登録」</div>
+              <label className="edit-label">② 年度を入力（例：令和8年前期・令和7年後期）</label>
+              <input
+                value={yearInput}
+                onChange={e=>setYearInput(e.target.value)}
+                placeholder="例：令和8年前期"
+                style={{width:"100%",border:"2px solid #E0D0F5",borderRadius:12,padding:"10px 12px",fontFamily:"inherit",fontSize:13,color:"#4A3728",background:"#FDFBFF",outline:"none"}}
+              />
+            </div>
+
+            <div className="edit-section">
+              <label className="edit-label">③ JSONを貼り付けて登録</label>
+              <div style={{background:"#F5F0FF",borderRadius:12,padding:"10px 12px",marginBottom:8,fontSize:11,color:"#5A3080",lineHeight:1.6}}>
+                このチャットでPDFをじんに送って「json化」と頼むと、JSONを生成してくれます。それをコピーして下に貼り付けてください。
               </div>
               <textarea
                 value={pasteText}
                 onChange={e=>setPasteText(e.target.value)}
                 placeholder={'[{"text":"問題文","options":["選1","選2","選3","選4","選5"],"answer":[0],"type":"single","explanation":"解説"},...]'}
-                style={{width:"100%",height:140,border:"2px solid #E0D0F5",borderRadius:12,padding:"10px 12px",fontFamily:"monospace",fontSize:11,color:"#4A3728",background:"#FDFBFF",resize:"vertical",outline:"none"}}
+                style={{width:"100%",height:120,border:"2px solid #E0D0F5",borderRadius:12,padding:"10px 12px",fontFamily:"monospace",fontSize:11,color:"#4A3728",background:"#FDFBFF",resize:"vertical",outline:"none"}}
               />
             </div>
 
             <button className="edit-btn" onClick={importJson} disabled={!pasteText.trim()}>
               ✅ JSONを登録する
             </button>
-            <div className="edit-note">Claudeが生成したJSONをそのまま貼り付けてください</div>
+            <div className="edit-note">年度を入力しておくと管理画面に記録されます</div>
           </>
         )}
 
@@ -388,9 +447,14 @@ function EditMode({ onExit }) {
           <div style={{textAlign:"center",padding:"20px 0"}}>
             <div style={{fontSize:36}}>🎉</div>
             <div style={{fontSize:15,fontWeight:800,color:"#52B858",margin:"12px 0"}}>{saveMsg}</div>
+            {yearInput.trim() && (
+              <div style={{background:"#EDE8FF",borderRadius:12,padding:"8px 14px",fontSize:12,color:"#7C3AED",fontWeight:700,marginBottom:8,display:"inline-block"}}>
+                📅 {yearInput.trim()} を年度記録に追加しました
+              </div>
+            )}
             <div className="edit-note">トップ画面から問題を解くことができます</div>
             <div style={{display:"flex",gap:8,marginTop:16}}>
-              <button className="edit-btn" style={{background:"linear-gradient(135deg,#6AB87A,#4A9E5A)"}} onClick={()=>{setPdfFile(null);setParsedQuestions([]);setStep("select");}}>
+              <button className="edit-btn" style={{background:"linear-gradient(135deg,#6AB87A,#4A9E5A)"}} onClick={()=>{setParsedQuestions([]);setPasteText("");setYearInput("");setStep("select");}}>
                 さらに追加する
               </button>
               <button className="edit-btn" style={{background:"linear-gradient(135deg,#A78BFA,#7C3AED)"}} onClick={onExit}>
