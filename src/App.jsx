@@ -4,33 +4,10 @@ import { useState, useEffect } from "react";
 const SB_URL = "https://irsvgbjiwmjsrlydndvx.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlyc3ZnYmppd21qc3JseWRuZHZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4Njg4MDgsImV4cCI6MjA5NzQ0NDgwOH0.3CHs7qqBcKPibWZErXeJtLJ0w1AFdsq0LzAFuIH9WxM";
 
+// ── Supabase DB直接アクセス（anon key使用）──
 const sb = {
-  auth: {
-    async signUp({ email, password, options }) {
-      const r = await fetch(SB_URL + "/auth/v1/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
-        body: JSON.stringify({ email, password, data: options?.data || {} })
-      });
-      return r.json();
-    },
-    async signIn({ email, password }) {
-      const r = await fetch(SB_URL + "/auth/v1/token?grant_type=password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "apikey": SB_KEY },
-        body: JSON.stringify({ email, password })
-      });
-      return r.json();
-    },
-    async signOut(token) {
-      await fetch(SB_URL + "/auth/v1/logout", {
-        method: "POST",
-        headers: { "apikey": SB_KEY, "Authorization": "Bearer " + token }
-      });
-    }
-  },
-  async from(table, token) {
-    const headers = { "apikey": SB_KEY, "Content-Type": "application/json", "Authorization": "Bearer " + token };
+  async from(table) {
+    const headers = { "apikey": SB_KEY, "Content-Type": "application/json", "Authorization": "Bearer " + SB_KEY };
     return {
       async select(query = "*", filter = "") {
         const r = await fetch(SB_URL + "/rest/v1/" + table + "?select=" + query + (filter ? "&" + filter : ""), { headers });
@@ -461,66 +438,46 @@ loadExtraQuestions();
 
 // ── メインアプリ ──
 export default function App() {
-  // ── 認証 state ──
-  const [user, setUser] = useState(null);       // ログイン中のuser
-  const [token, setToken] = useState(null);     // アクセストークン
-  const [authScreen, setAuthScreen] = useState("login"); // login | signup
-  const [authEmail, setAuthEmail] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
+  // ── 認証 state（名前だけのシンプルログイン）──
+  const [user, setUser] = useState(null);
   const [authName, setAuthName] = useState("");
   const [authError, setAuthError] = useState("");
-  const [authLoading, setAuthLoading] = useState(false);
 
   // ── セッション復元 ──
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("hk_session") || "null");
-      if (saved && saved.token && saved.user) {
-        setUser(saved.user); setToken(saved.token);
-      }
+      const saved = JSON.parse(localStorage.getItem("hk_user") || "null");
+      if (saved && saved.name) setUser(saved);
     } catch(e) {}
   }, []);
 
-  const handleLogin = async () => {
-    setAuthLoading(true); setAuthError("");
-    try {
-      const res = await sb.auth.signIn({ email: authEmail, password: authPassword });
-      if (res.error || !res.access_token) throw new Error(res.error?.message || "ログイン失敗");
-      const u = { id: res.user.id, email: res.user.email, name: res.user.user_metadata?.name || res.user.email };
-      setUser(u); setToken(res.access_token);
-      localStorage.setItem("hk_session", JSON.stringify({ user: u, token: res.access_token }));
-    } catch(e) { setAuthError(e.message); }
-    setAuthLoading(false);
-  };
-
-  const handleSignup = async () => {
-    if (!authName.trim()) { setAuthError("名前を入力してください"); return; }
-    setAuthLoading(true); setAuthError("");
-    try {
-      const res = await sb.auth.signUp({ email: authEmail, password: authPassword, options: { data: { name: authName } } });
-      if (res.error || !res.user) throw new Error(res.error?.message || "登録失敗");
-      setAuthError(""); setAuthScreen("login");
-      setAuthError("✅ 登録完了！メールを確認してログインしてください。");
-    } catch(e) { setAuthError(e.message); }
-    setAuthLoading(false);
+  const handleLogin = () => {
+    const name = authName.trim();
+    if (!name) { setAuthError("名前を入力してください"); return; }
+    // UUIDの代わりに名前ベースのIDを生成（同じ名前は同じID）
+    const id = "user_" + name.replace(/\s+/g,"_").toLowerCase();
+    const u = { id, name };
+    setUser(u);
+    localStorage.setItem("hk_user", JSON.stringify(u));
   };
 
   const handleLogout = () => {
-    if (token) sb.auth.signOut(token).catch(()=>{});
-    setUser(null); setToken(null);
-    localStorage.removeItem("hk_session");
+    setUser(null);
+    setAuthName("");
+    localStorage.removeItem("hk_user");
   };
+
 
   // ── 成績保存 ──
   const saveResult = async (subjectId, subjectName, sc, tot, questionList, resultList) => {
-    if (!token || !user) return;
+    if (!user) return;
     try {
-      const db = await sb.from("quiz_results", token);
+      const db = await sb.from("quiz_results");
       await db.insert({
         user_id: user.id, subject_id: subjectId, subject_name: subjectName,
         score: sc, total: tot, percentage: Math.round(sc/tot*100)
       });
-      const db2 = await sb.from("question_answers", token);
+      const db2 = await sb.from("question_answers");
       await db2.insert(resultList.map((r, i) => ({
         user_id: user.id, subject_id: subjectId,
         question_index: i, question_text: questionList[i]?.text?.slice(0, 100) || "",
@@ -537,9 +494,9 @@ export default function App() {
     if (!token) return;
     setDashLoading(true);
     try {
-      const db1 = await sb.from("quiz_results", token);
+      const db1 = await sb.from("quiz_results");
       const results = await db1.select("*");
-      const db2 = await sb.from("profiles", token);
+      const db2 = await sb.from("profiles");
       const profiles = await db2.select("*");
       setDashData({ results: Array.isArray(results) ? results : [], profiles: Array.isArray(profiles) ? profiles : [] });
     } catch(e) { console.error(e); }
@@ -716,41 +673,28 @@ export default function App() {
     return <div style={{padding:20,textAlign:"center",color:"#E87A3A",fontFamily:"sans-serif"}}>データ読み込みエラー</div>;
   }
 
-  // ── ログイン画面 ──
+  // ── ログイン画面（名前だけ）──
   if (!user) {
     return (
       <div style={{minHeight:"100vh",background:"#FFFBF4",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px",fontFamily:"'M PLUS Rounded 1c',sans-serif"}}>
-        <div style={{background:"white",borderRadius:24,padding:"28px 24px",width:"100%",maxWidth:360,boxShadow:"0 6px 24px rgba(0,0,0,0.1)"}}>
-          <div style={{textAlign:"center",marginBottom:20}}>
-            <img src={LOGO_URI} alt="logo" style={{width:60,height:60,objectFit:"contain"}}/>
-            <div style={{fontSize:20,fontWeight:900,color:"#E8763A",marginTop:6}}>ぽけっとランド保育士検定</div>
-            <div style={{fontSize:12,color:"#B0907A",marginTop:2}}>職員ログイン</div>
-          </div>
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
-            {["login","signup"].map(s=>(
-              <button key={s} onClick={()=>{setAuthScreen(s);setAuthError("");}}
-                style={{flex:1,padding:"10px",borderRadius:100,border:"2px solid "+(authScreen===s?"#E8763A":"#F0E4DA"),background:authScreen===s?"#FFF3EC":"white",fontFamily:"inherit",fontSize:13,fontWeight:700,color:authScreen===s?"#E8763A":"#B0907A",cursor:"pointer"}}>
-                {s==="login"?"ログイン":"新規登録"}
-              </button>
-            ))}
-          </div>
-          {authScreen==="signup" && (
-            <input value={authName} onChange={e=>setAuthName(e.target.value)}
-              placeholder="お名前（例：山田花子）"
-              style={{width:"100%",border:"2px solid #F0E4DA",borderRadius:12,padding:"11px 14px",fontFamily:"inherit",fontSize:13,marginBottom:10,outline:"none"}}/>
-          )}
-          <input type="email" value={authEmail} onChange={e=>setAuthEmail(e.target.value)}
-            placeholder="メールアドレス"
-            style={{width:"100%",border:"2px solid #F0E4DA",borderRadius:12,padding:"11px 14px",fontFamily:"inherit",fontSize:13,marginBottom:10,outline:"none"}}/>
-          <input type="password" value={authPassword} onChange={e=>setAuthPassword(e.target.value)}
-            placeholder="パスワード（6文字以上）"
-            onKeyDown={e=>{if(e.key==="Enter") authScreen==="login"?handleLogin():handleSignup();}}
-            style={{width:"100%",border:"2px solid #F0E4DA",borderRadius:12,padding:"11px 14px",fontFamily:"inherit",fontSize:13,marginBottom:12,outline:"none"}}/>
-          {authError && <div style={{fontSize:12,color:authError.startsWith("✅")?"#52B858":"#E05050",fontWeight:600,marginBottom:10,textAlign:"center"}}>{authError}</div>}
-          <button onClick={authScreen==="login"?handleLogin:handleSignup} disabled={authLoading}
-            style={{width:"100%",background:"linear-gradient(135deg,#FF9055,#E8763A)",color:"white",border:"none",borderRadius:100,padding:"14px",fontFamily:"inherit",fontSize:15,fontWeight:800,cursor:"pointer",opacity:authLoading?0.6:1}}>
-            {authLoading?"処理中...":(authScreen==="login"?"ログイン":"アカウント作成")}
+        <div style={{background:"white",borderRadius:24,padding:"32px 24px",width:"100%",maxWidth:340,boxShadow:"0 6px 24px rgba(0,0,0,0.1)",textAlign:"center"}}>
+          <img src={LOGO_URI} alt="logo" style={{width:72,height:72,objectFit:"contain",marginBottom:10}}/>
+          <div style={{fontSize:20,fontWeight:900,color:"#E8763A",marginBottom:4}}>ぽけっとランド</div>
+          <div style={{fontSize:14,fontWeight:700,color:"#B0907A",marginBottom:24}}>保育士検定</div>
+          <input
+            value={authName}
+            onChange={e=>setAuthName(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+            placeholder="お名前を入力（例：山田花子）"
+            autoFocus
+            style={{width:"100%",border:"2.5px solid #F0E4DA",borderRadius:14,padding:"13px 16px",fontFamily:"inherit",fontSize:14,marginBottom:10,outline:"none",textAlign:"center",letterSpacing:"0.5px"}}
+          />
+          {authError && <div style={{fontSize:12,color:"#E05050",fontWeight:600,marginBottom:10}}>{authError}</div>}
+          <button onClick={handleLogin}
+            style={{width:"100%",background:"linear-gradient(135deg,#FF9055,#E8763A)",color:"white",border:"none",borderRadius:100,padding:"14px",fontFamily:"inherit",fontSize:15,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 14px rgba(232,118,58,0.35)"}}>
+            はじめる →
           </button>
+          <div style={{fontSize:11,color:"#C0A090",marginTop:14}}>名前を入力するだけで使えます</div>
         </div>
       </div>
     );
