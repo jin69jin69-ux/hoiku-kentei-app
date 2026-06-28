@@ -520,6 +520,7 @@ export default function App() {
   });
   // シャッフルモード用
   const [shufflePool, setShufflePool] = useState(null); // null=通常, array=シャッフル中の全問リスト
+  const [preparedQuestions, setPreparedQuestions] = useState({}); // 選択肢シャッフル済み問題
 
   // ALL_SUBJECTS は埋め込みデータから参照
   const subj = typeof ALL_SUBJECTS !== "undefined"
@@ -573,9 +574,6 @@ export default function App() {
       try{localStorage.setItem("pk_best3",JSON.stringify(nb));}catch{}
     }
   };
-
-  // 科目ごとにシャッフル済み問題を保持
-  const [preparedQuestions, setPreparedQuestions] = useState({});
 
   const startQuiz = (id) => {
     setShufflePool(null);
