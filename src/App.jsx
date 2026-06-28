@@ -874,17 +874,17 @@ export default function App() {
               })}
             </div>
             <div className="foot">ぽけっとランド南千住瑞光保育園 ★ 内部学習ツール</div>
-            <button className="shuffle-btn" onClick={startShuffle}>
-              <span style={{fontSize:22}}>🔀</span>
-              <span>シャッフル出題 20問</span>
-              <span style={{fontSize:12,opacity:0.85,fontWeight:600}}>全科目からランダム</span>
-            </button>
-            <button className="shuffle-btn" onClick={()=>{setTestMode(true);startTest();}}
-              style={{background:"linear-gradient(135deg,#F59E0B,#D97706)",marginTop:8}}>
-              <span style={{fontSize:22}}>📝</span>
-              <span>模擬テスト 45問</span>
-              <span style={{fontSize:12,opacity:0.85,fontWeight:600}}>全科目×5問・採点＆分析</span>
-            </button>
+            <div style={{display:"flex",gap:8,marginTop:8}}>
+              <button className="shuffle-btn" onClick={startShuffle} style={{flex:1}}>
+                <span style={{fontSize:20}}>🔀</span>
+                <span style={{fontSize:13}}>シャッフル 20問</span>
+              </button>
+              <button className="shuffle-btn" onClick={()=>{setTestMode(true);startTest();}}
+                style={{flex:1,background:"linear-gradient(135deg,#F59E0B,#D97706)"}}>
+                <span style={{fontSize:20}}>📝</span>
+                <span style={{fontSize:13}}>模擬テスト 45問</span>
+              </button>
+            </div>
             {/* 編集モードボタン */}
             <div style={{textAlign:"center",marginTop:14}}>
               <button onClick={()=>{setShowPwModal(true);setPwInput("");setPwError(false);}}
