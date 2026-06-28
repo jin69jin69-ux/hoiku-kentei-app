@@ -526,8 +526,12 @@ export default function App() {
     ? ALL_SUBJECTS.find(s=>s.id===sid)
     : null;
   // シャッフルモードか通常モードかで現在の問題を切り替え
-  const q = shufflePool ? shufflePool[qi] : subj?.questions[qi];
-  const total = shufflePool ? shufflePool.length : (subj?.questions.length || 0);
+  // preparedQuestionsがあればそちら（選択肢シャッフル済み）を使う
+  const currentQuestions = shufflePool
+    ? shufflePool
+    : (sid && preparedQuestions[sid] ? preparedQuestions[sid] : subj?.questions);
+  const q = currentQuestions?.[qi];
+  const total = currentQuestions?.length || 0;
   const score = results.filter(r=>r.ok).length;
   const pct = total ? Math.round(score/total*100) : 0;
 
@@ -538,9 +542,23 @@ export default function App() {
     return a;
   };
 
+  // 選択肢の順番をランダムにシャッフル（answerインデックスも更新）
+  const shuffleOptions = (q) => {
+    const indices = q.options.map((_, i) => i);
+    const shuffled = shuffleArray(indices);
+    return {
+      ...q,
+      options: shuffled.map(i => q.options[i]),
+      answer: q.answer.map(a => shuffled.indexOf(a))
+    };
+  };
+
+  // 問題リスト全体の選択肢をシャッフル
+  const prepareQuestions = (qs) => qs.map(q => shuffleOptions(q));
+
   const startShuffle = () => {
     const allQs = ALL_SUBJECTS.flatMap(s => s.questions.map(q => ({...q, _subjectName:s.name, _subjectColor:s.color, _subjectEmoji:s.emoji})));
-    const pool = shuffleArray(allQs).slice(0, 20); // 全問からランダム20問
+    const pool = prepareQuestions(shuffleArray(allQs).slice(0, 20));
     setShufflePool(pool);
     setSid("__shuffle__");
     setQi(0); setSel([]); setAnswered(false);
@@ -556,8 +574,19 @@ export default function App() {
     }
   };
 
+  // 科目ごとにシャッフル済み問題を保持
+  const [preparedQuestions, setPreparedQuestions] = useState({});
+
   const startQuiz = (id) => {
     setShufflePool(null);
+    // 選択肢をシャッフルして準備
+    const subj = ALL_SUBJECTS.find(s => s.id === id);
+    if (subj) {
+      setPreparedQuestions(prev => ({
+        ...prev,
+        [id]: prepareQuestions(subj.questions)
+      }));
+    }
     setSid(id); setQi(0); setSel([]); setAnswered(false);
     setResults([]); setExpanded(null); setScreen("quiz");
   };
@@ -931,7 +960,7 @@ export default function App() {
         {screen==="result" && (()=>{
           const rColor = shufflePool ? "#7C3AED" : (subj?.color||"#E8763A");
           const rLabel = shufflePool ? "🔀 全科目シャッフル" : `${subj?.emoji} ${subj?.name}`;
-          const qList = shufflePool ? shufflePool : (subj?.questions||[]);
+          const qList = currentQuestions || [];
           return (
           <div className="rbox">
             <div style={{textAlign:"center",marginBottom:6}}>
