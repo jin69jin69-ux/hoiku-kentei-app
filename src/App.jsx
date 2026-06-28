@@ -533,36 +533,38 @@ export default function App() {
 
 
   // ── 成績保存 ──
-  const saveResult = async (subjectId, subjectName, sc, tot, questionList, resultList) => {
-    if (!user) return;
+  // ── 成績をlocalStorageに保存 ──
+  const getMyHistory = () => {
+    if(!user) return [];
+    try { return JSON.parse(localStorage.getItem("hk_history_" + user.id) || "[]"); } catch { return []; }
+  };
+  const saveResult = (subjectId, subjectName, sc, tot, questionList, resultList, mode="normal") => {
+    if(!user) return;
     try {
-      const db = await sb.from("quiz_results");
-      await db.insert({
-        user_id: user.id, subject_id: subjectId, subject_name: subjectName,
-        score: sc, total: tot, percentage: Math.round(sc/tot*100)
+      const history = getMyHistory();
+      history.push({
+        subjectId, subjectName, score: sc, total: tot,
+        percentage: Math.round(sc/tot*100),
+        mode, // "normal" | "test"
+        answeredAt: new Date().toISOString(),
+        questions: resultList.map((r, i) => ({
+          text: questionList[i]?.text?.slice(0,80) || "",
+          isCorrect: r.ok
+        }))
       });
-      const db2 = await sb.from("question_answers");
-      await db2.insert(resultList.map((r, i) => ({
-        user_id: user.id, subject_id: subjectId,
-        question_index: i, question_text: questionList[i]?.text?.slice(0, 100) || "",
-        is_correct: r.ok
-      })));
+      localStorage.setItem("hk_history_" + user.id, JSON.stringify(history));
     } catch(e) { console.error("成績保存エラー:", e); }
   };
 
-  // ── ダッシュボード ──
+  // ── ダッシュボード（localStorage版）──
   const [dashData, setDashData] = useState(null);
   const [dashLoading, setDashLoading] = useState(false);
 
-  const loadDashboard = async () => {
-    if (!token) return;
+  const loadDashboard = () => {
     setDashLoading(true);
     try {
-      const db1 = await sb.from("quiz_results");
-      const results = await db1.select("*");
-      const db2 = await sb.from("profiles");
-      const profiles = await db2.select("*");
-      setDashData({ results: Array.isArray(results) ? results : [], profiles: Array.isArray(profiles) ? profiles : [] });
+      const history = getMyHistory();
+      setDashData({ history });
     } catch(e) { console.error(e); }
     setDashLoading(false);
   };
@@ -583,8 +585,10 @@ export default function App() {
     try{return JSON.parse(localStorage.getItem("pk_best3")||"{}");}catch{return {};}
   });
   // シャッフルモード用
-  const [shufflePool, setShufflePool] = useState(null); // null=通常, array=シャッフル中の全問リスト
-  const [preparedQuestions, setPreparedQuestions] = useState({}); // 選択肢シャッフル済み問題
+  const [shufflePool, setShufflePool] = useState(null);
+  const [preparedQuestions, setPreparedQuestions] = useState({});
+  const [testMode, setTestMode] = useState(false); // テストモードフラグ
+  const [testPool, setTestPool] = useState(null);  // テスト用問題プール
 
   // ALL_SUBJECTS は埋め込みデータから参照
   const subj = typeof ALL_SUBJECTS !== "undefined"
@@ -622,6 +626,7 @@ export default function App() {
   const prepareQuestions = (qs) => qs.map(q => shuffleOptions(q));
 
   const startShuffle = () => {
+    setTestMode(false);
     const allQs = ALL_SUBJECTS.flatMap(s => s.questions.map(q => ({...q, _subjectName:s.name, _subjectColor:s.color, _subjectEmoji:s.emoji})));
     const pool = prepareQuestions(shuffleArray(allQs).slice(0, 20));
     setShufflePool(pool);
@@ -639,8 +644,24 @@ export default function App() {
     }
   };
 
+  // テストモード開始（全科目×5問=45問）
+  const startTest = () => {
+    const pool = ALL_SUBJECTS.flatMap(s => {
+      const qs = s.questions.map(q => ({...q, _subjectId:s.id, _subjectName:s.name, _subjectColor:s.color, _subjectEmoji:s.emoji}));
+      return shuffleArray(qs).slice(0, 5).map(q => shuffleOptions(q));
+    });
+    // 科目順でなくランダム順に並べ替え
+    const shuffled = shuffleArray(pool);
+    setShufflePool(shuffled);
+    setTestMode(true);
+    setSid("__test__");
+    setQi(0); setSel([]); setAnswered(false);
+    setResults([]); setExpanded(null); setScreen("quiz");
+  };
+
   const startQuiz = (id) => {
     setShufflePool(null);
+    setTestMode(false);
     // 選択肢をシャッフルして準備
     const subj = ALL_SUBJECTS.find(s => s.id === id);
     if (subj) {
@@ -669,9 +690,20 @@ export default function App() {
   const next = () => {
     if(qi+1 >= total){
       if(!shufflePool) {
+        // 通常モード
         saveBest(sid, score, total);
         const qList = subj?.questions || [];
         saveResult(sid, subj?.name || "", score, total, qList, results);
+      } else if(testMode) {
+        // テストモード：科目別に成績を分割保存
+        const pool = shufflePool;
+        ALL_SUBJECTS.forEach(s => {
+          const sResults = pool.map((q,i) => ({q, r: results[i]})).filter(({q}) => q._subjectId === s.id);
+          if(sResults.length > 0) {
+            const sc = sResults.filter(({r}) => r?.ok).length;
+            saveResult(s.id, s.name, sc, sResults.length, sResults.map(({q})=>q), sResults.map(({r})=>r||{ok:false}), "test");
+          }
+        });
       }
       setScreen("result");
     } else {
@@ -847,6 +879,12 @@ export default function App() {
               <span>シャッフル出題 20問</span>
               <span style={{fontSize:12,opacity:0.85,fontWeight:600}}>全科目からランダム</span>
             </button>
+            <button className="shuffle-btn" onClick={()=>{setTestMode(true);startTest();}}
+              style={{background:"linear-gradient(135deg,#F59E0B,#D97706)",marginTop:8}}>
+              <span style={{fontSize:22}}>📝</span>
+              <span>模擬テスト 45問</span>
+              <span style={{fontSize:12,opacity:0.85,fontWeight:600}}>全科目×5問・採点＆分析</span>
+            </button>
             {/* 編集モードボタン */}
             <div style={{textAlign:"center",marginTop:14}}>
               <button onClick={()=>{setShowPwModal(true);setPwInput("");setPwError(false);}}
@@ -887,83 +925,142 @@ export default function App() {
             </div>
           </div>
         )}
-        )}
 
         {/* ─── DASHBOARD ─── */}
-        {screen==="dashboard" && (
+        {screen==="dashboard" && (()=>{
+          const history = dashData?.history || [];
+          // 科目別の最新・最高成績
+          const subjectStats = ALL_SUBJECTS.map(s => {
+            const rs = history.filter(r => r.subjectId === s.id);
+            if(rs.length === 0) return {id:s.id, name:s.name, emoji:s.emoji, color:s.color, best:null, latest:null, count:0, weakRate:null};
+            const best = Math.max(...rs.map(r => r.percentage));
+            const latest = rs[rs.length-1].percentage;
+            const count = rs.length;
+            // 弱点：各問題の正解率
+            const allQs = rs.flatMap(r => r.questions||[]);
+            const wrongRate = allQs.length > 0 ? Math.round((allQs.filter(q=>!q.isCorrect).length / allQs.length)*100) : 0;
+            return {id:s.id, name:s.name, emoji:s.emoji, color:s.color, best, latest, count, wrongRate};
+          });
+          // テスト履歴（テストモードのみ）
+          const testHistory = history.filter(r => r.mode === "test");
+          // 科目別弱点ランキング（wrongRate高い順）
+          const weakSubjects = [...subjectStats].filter(s=>s.wrongRate!==null).sort((a,b)=>b.wrongRate-a.wrongRate);
+          // 総合スコア（最新テスト）
+          const lastTestResults = testHistory.length > 0 ? (() => {
+            const lastDate = testHistory[testHistory.length-1].answeredAt.slice(0,10);
+            const sameTest = testHistory.filter(r=>r.answeredAt.slice(0,10)===lastDate);
+            return sameTest;
+          })() : [];
+          const lastTestScore = lastTestResults.length > 0
+            ? Math.round(lastTestResults.reduce((a,r)=>a+r.percentage,0)/lastTestResults.length)
+            : null;
+
+          return (
           <div style={{background:"white",borderRadius:24,padding:"20px 16px",boxShadow:"0 4px 20px rgba(0,0,0,0.07)"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
               <span style={{fontSize:16,fontWeight:800,color:"#E8763A"}}>📊 成績ダッシュボード</span>
               <button onClick={()=>setScreen("top")} style={{background:"#FFF5F0",color:"#E8763A",border:"none",borderRadius:100,padding:"6px 14px",fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>← 戻る</button>
             </div>
 
-            {dashLoading && <div style={{textAlign:"center",padding:"30px",color:"#B0907A"}}>読み込み中...</div>}
+            {history.length === 0 ? (
+              <div style={{textAlign:"center",padding:"40px 20px",color:"#B0907A"}}>
+                <div style={{fontSize:40,marginBottom:12}}>📝</div>
+                <div style={{fontSize:14,fontWeight:700}}>まだ受験データがありません</div>
+                <div style={{fontSize:12,marginTop:6}}>問題を解くと成績が記録されます</div>
+              </div>
+            ) : (
+              <>
+                {/* 科目別成績バー */}
+                <div style={{fontSize:14,fontWeight:800,color:"#4A3728",marginBottom:10}}>🎯 科目別 最高スコア</div>
+                {subjectStats.map((s,i)=>(
+                  <div key={i} style={{marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                      <span style={{fontSize:12,fontWeight:700,color:"#4A3728"}}>{s.emoji} {s.name}</span>
+                      <span style={{fontSize:12,fontWeight:800,color:s.best>=80?"#52B858":s.best>=60?"#E8A040":"#E05050"}}>
+                        {s.best!=null ? s.best+"%" : "未受験"}
+                      </span>
+                    </div>
+                    <div style={{background:"#F5EDE8",borderRadius:100,height:10,overflow:"hidden"}}>
+                      {s.best!=null && <div style={{width:s.best+"%",height:"100%",background:s.best>=80?"#52B858":s.best>=60?"#E8A040":"#E87070",borderRadius:100,transition:"width 0.8s"}}/>}
+                    </div>
+                    {s.count>0&&<div style={{fontSize:10,color:"#B0907A",marginTop:1}}>{s.count}回受験・最新{s.latest}%</div>}
+                  </div>
+                ))}
 
-            {dashData && !dashLoading && (()=>{
-              // 自分の成績
-              const myResults = dashData.results.filter(r=>r.user_id===user?.id);
-              const subjectStats = ALL_SUBJECTS.map(s=>{
-                const rs = myResults.filter(r=>r.subject_id===s.id);
-                if(rs.length===0) return {name:s.name,emoji:s.emoji,color:s.color,avg:null,count:0};
-                const avg = Math.round(rs.reduce((a,b)=>a+b.percentage,0)/rs.length);
-                return {name:s.name,emoji:s.emoji,color:s.color,avg,count:rs.length,best:Math.max(...rs.map(r=>r.percentage))};
-              });
-
-              // 全職員ランキング（最新スコア）
-              const userLatest = {};
-              dashData.results.forEach(r=>{
-                if(!userLatest[r.user_id] || new Date(r.answered_at)>new Date(userLatest[r.user_id].answered_at)){
-                  userLatest[r.user_id]=r;
-                }
-              });
-              // 職員ごとの全科目平均
-              const userAvg = {};
-              dashData.results.forEach(r=>{
-                if(!userAvg[r.user_id]) userAvg[r.user_id]={total:0,count:0,name:""};
-                userAvg[r.user_id].total+=r.percentage;
-                userAvg[r.user_id].count+=1;
-              });
-              const profiles = dashData.profiles || [];
-              const ranking = Object.entries(userAvg).map(([uid,v])=>{
-                const p = profiles.find(p=>p.id===uid);
-                return {uid, name:p?.name||"不明", avg:Math.round(v.total/v.count), count:v.count, isMe:uid===user?.id};
-              }).sort((a,b)=>b.avg-a.avg);
-
-              return (
-                <>
-                  {/* 自分の科目別成績 */}
-                  <div style={{fontSize:14,fontWeight:800,color:"#4A3728",marginBottom:10}}>🎯 あなたの科目別成績</div>
-                  {subjectStats.map((s,i)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                      <span style={{fontSize:14,width:20}}>{s.emoji}</span>
-                      <span style={{fontSize:12,fontWeight:600,color:"#6B4F3A",width:100,flexShrink:0}}>{s.name}</span>
-                      <div style={{flex:1,background:"#F5EDE8",borderRadius:100,height:12,overflow:"hidden"}}>
-                        {s.avg!=null&&<div style={{width:s.avg+"%",height:"100%",background:s.color,borderRadius:100,transition:"width 0.6s"}}/>}
+                {/* 弱点分析 */}
+                <div style={{fontSize:14,fontWeight:800,color:"#4A3728",margin:"20px 0 10px"}}>⚠️ 弱点分析（不正解率が高い科目）</div>
+                <div style={{background:"#FFFBF0",borderRadius:16,padding:"12px 14px"}}>
+                  {weakSubjects.slice(0,3).map((s,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:10,marginBottom:i<2?10:0}}>
+                      <span style={{fontSize:18,width:24,textAlign:"center"}}>{i===0?"🔴":i===1?"🟡":"🟢"}</span>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#4A3728"}}>{s.emoji} {s.name}</div>
+                        <div style={{fontSize:11,color:"#B0907A"}}>不正解率 {s.wrongRate}%</div>
                       </div>
-                      <span style={{fontSize:12,fontWeight:700,color:s.color,width:50,textAlign:"right"}}>
-                        {s.avg!=null?s.best+"%（最高）":"未受験"}
-                      </span>
+                      <div style={{background:s.wrongRate>=50?"#FFE8E8":s.wrongRate>=30?"#FFF8E0":"#E8FFE8",borderRadius:100,padding:"4px 10px",fontSize:12,fontWeight:800,color:s.wrongRate>=50?"#E05050":s.wrongRate>=30?"#E8A040":"#52B858"}}>
+                        {s.wrongRate>=50?"要強化":s.wrongRate>=30?"要注意":"良好"}
+                      </div>
                     </div>
                   ))}
+                  {weakSubjects.length===0&&<div style={{color:"#B0907A",fontSize:12,textAlign:"center"}}>データ不足</div>}
+                </div>
 
-                  {/* 全員ランキング */}
-                  <div style={{fontSize:14,fontWeight:800,color:"#4A3728",margin:"20px 0 10px"}}>🏆 職員ランキング（全科目平均）</div>
-                  {ranking.map((r,i)=>(
-                    <div key={r.uid} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:r.isMe?"#FFF3EC":"#FAFAFA",borderRadius:14,marginBottom:6,border:r.isMe?"2px solid #F5C4A0":"2px solid #F0F0F0"}}>
-                      <span style={{fontSize:16,fontWeight:900,color:i===0?"#FFB800":i===1?"#AAA":i===2?"#CD7F32":"#CCC",width:24}}>
-                        {i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}
-                      </span>
-                      <span style={{flex:1,fontSize:13,fontWeight:700,color:"#4A3728"}}>{r.name}{r.isMe?" (あなた)":""}</span>
-                      <span style={{fontSize:13,fontWeight:800,color:"#E8763A"}}>{r.avg}%</span>
-                      <span style={{fontSize:11,color:"#B0907A"}}>{r.count}回受験</span>
+                {/* AI診断コメント */}
+                <div style={{fontSize:14,fontWeight:800,color:"#4A3728",margin:"20px 0 10px"}}>💬 総合評価</div>
+                <div style={{background:"linear-gradient(135deg,#FFF9ED,#FFF5F0)",borderRadius:16,padding:"14px",fontSize:13,color:"#5A3D20",lineHeight:1.8}}>
+                  {(()=>{
+                    const studied = subjectStats.filter(s=>s.best!=null);
+                    const strong = subjectStats.filter(s=>s.best>=80);
+                    const weak = weakSubjects.filter(s=>s.wrongRate>=40);
+                    const avg = studied.length>0 ? Math.round(studied.reduce((a,s)=>a+s.best,0)/studied.length) : 0;
+                    if(studied.length===0) return "まずは各科目にチャレンジしてみましょう！";
+                    let msg = `受験済み${studied.length}科目の平均最高スコアは${avg}%です。`;
+                    if(strong.length>0) msg += `
+🌸 得意科目：${strong.map(s=>s.name).join("・")}`;
+                    if(weak.length>0) msg += `
+⚠️ 重点的に学習したい科目：${weak.map(s=>s.name).join("・")}`;
+                    if(avg>=80) msg += "
+🎉 全体的に優秀です！本番も自信を持って！";
+                    else if(avg>=60) msg += "
+📚 合格ラインまであと少し！弱点科目を集中練習しましょう。";
+                    else msg += "
+💪 基礎から丁寧に復習しましょう。毎日少しずつ続けることが大切です。";
+                    return msg;
+                  })().split("
+").map((line,i)=><div key={i}>{line}</div>)}
+                </div>
+
+                {/* テスト履歴ヒストグラム */}
+                {testHistory.length > 0 && (
+                  <>
+                    <div style={{fontSize:14,fontWeight:800,color:"#4A3728",margin:"20px 0 10px"}}>📈 模擬テスト 科目別スコア（最新回）</div>
+                    <div style={{display:"flex",alignItems:"flex-end",gap:4,height:100,padding:"0 4px"}}>
+                      {ALL_SUBJECTS.map(s=>{
+                        const rs = testHistory.filter(r=>r.subjectId===s.id);
+                        const latest = rs.length>0 ? rs[rs.length-1].percentage : null;
+                        return (
+                          <div key={s.id} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                            <div style={{fontSize:9,fontWeight:700,color:latest>=80?"#52B858":latest>=60?"#E8A040":"#E87070"}}>
+                              {latest!=null?latest+"%":""}
+                            </div>
+                            <div style={{width:"100%",background:latest!=null?(latest>=80?"#52B858":latest>=60?"#E8A040":"#E87070"):"#F0E4DA",borderRadius:"4px 4px 0 0",height:latest!=null?(latest)+"px":"4px",minHeight:4,transition:"height 0.6s"}}/>
+                            <div style={{fontSize:8,color:"#B0907A",textAlign:"center",lineHeight:1.2}}>{s.emoji}</div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                  {ranking.length===0&&<div style={{color:"#B0907A",fontSize:13,textAlign:"center",padding:"20px 0"}}>まだ受験データがありません</div>}
-                </>
-              );
-            })()}
+                    <div style={{display:"flex",justifyContent:"space-between",padding:"0 4px",marginTop:4}}>
+                      <span style={{fontSize:9,color:"#B0907A"}}>0%</span>
+                      <span style={{fontSize:10,color:"#4A3728",fontWeight:600}}>各科目5問中の正解率</span>
+                      <span style={{fontSize:9,color:"#B0907A"}}>100%</span>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
-        )}
+          );
+        })()}
 
         {/* ─── QUIZ ─── */}
         {screen==="quiz" && q && (()=>{
