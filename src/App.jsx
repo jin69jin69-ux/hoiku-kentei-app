@@ -1015,19 +1015,13 @@ export default function App() {
                     const avg = studied.length>0 ? Math.round(studied.reduce((a,s)=>a+s.best,0)/studied.length) : 0;
                     if(studied.length===0) return "まずは各科目にチャレンジしてみましょう！";
                     let msg = `受験済み${studied.length}科目の平均最高スコアは${avg}%です。`;
-                    if(strong.length>0) msg += `
-🌸 得意科目：${strong.map(s=>s.name).join("・")}`;
-                    if(weak.length>0) msg += `
-⚠️ 重点的に学習したい科目：${weak.map(s=>s.name).join("・")}`;
-                    if(avg>=80) msg += "
-🎉 全体的に優秀です！本番も自信を持って！";
-                    else if(avg>=60) msg += "
-📚 合格ラインまであと少し！弱点科目を集中練習しましょう。";
-                    else msg += "
-💪 基礎から丁寧に復習しましょう。毎日少しずつ続けることが大切です。";
+                    if(strong.length>0) msg += " 得意：" + strong.map(s=>s.name).join("・");
+                    if(weak.length>0) msg += " 要強化：" + weak.map(s=>s.name).join("・");
+                    if(avg>=80) msg += " 優秀です！自信を持って本番へ！";
+                    else if(avg>=60) msg += " もう少し！弱点科目を集中練習しましょう。";
+                    else msg += " 基礎から丁寧に復習しましょう。";
                     return msg;
-                  })().split("
-").map((line,i)=><div key={i}>{line}</div>)}
+                  })().split("\n").map((line,i)=><div key={i}>{line}</div>)}
                 </div>
 
                 {/* テスト履歴ヒストグラム */}
